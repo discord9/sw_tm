@@ -1,0 +1,35 @@
+{
+    "port": 14514,
+    "plots": [
+        {
+            "name": "height",
+            "x_axis": "tick",
+            "y_axis": "height"
+        },
+        {
+            "name": "pitch",
+            "x_axis": "tick",
+            "y_axis": "pitch"
+        },
+        {
+            "name": "roll",
+            "x_axis": "tick",
+            "y_axis": "roll"
+        },
+        {
+            "name": "set_height",
+            "x_axis": "tick",
+            "y_axis": "setHeight"
+        },
+        {
+            "name": "height",
+            "x_axis": "tick",
+            "y_axis": ""
+        },
+        {
+            "name": "height",
+            "x_axis": "tick",
+            "y_axis": ""
+        }
+    ]
+}
