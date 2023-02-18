@@ -2,34 +2,34 @@
     "port": 14514,
     "plots": [
         {
-            "name": "height",
-            "x_axis": "tick",
-            "y_axis": "height"
+            "name": "x2z",
+            "x_axis": "x",
+            "y_axis": ["z"]
         },
         {
-            "name": "pitch",
+            "name": "y",
             "x_axis": "tick",
-            "y_axis": "pitch"
+            "y_axis": ["y"]
         },
         {
-            "name": "roll",
+            "name": "z",
             "x_axis": "tick",
-            "y_axis": "roll"
+            "y_axis": ["z"]
         },
         {
-            "name": "set_height",
+            "name": "rx",
             "x_axis": "tick",
-            "y_axis": "setHeight"
+            "y_axis": ["rx"]
         },
         {
-            "name": "height",
+            "name": "ry",
             "x_axis": "tick",
-            "y_axis": ""
+            "y_axis": ["ry", "ry_old"]
         },
         {
-            "name": "height",
+            "name": "rz",
             "x_axis": "tick",
-            "y_axis": ""
+            "y_axis": ["rz"]
         }
     ]
 }

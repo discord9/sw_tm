@@ -1,52 +1,93 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Mutex,
-    time::Instant,
-};
+use std::collections::HashMap;
 
-use chrono::{DateTime, Local, NaiveDate, TimeZone};
+use chrono::{DateTime, Local};
 use eframe::Theme;
-use egui::plot::{Legend, Line, MarkerShape, Plot, PlotPoints, PlotUi, Points};
+use egui::plot::{Corner, Legend, Line, MarkerShape, Plot, PlotPoints, PlotUi, Points};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const WIDTH: f32 = 200.0;
+
+/// support multiple lines in one plot
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct RealTimePlot {
     #[serde(skip)]
-    line: Vec<[f64; 2]>,
+    line: Vec<Vec<[f64; 2]>>,
     #[serde(skip)]
-    latest: [f64; 2],
+    latest: Vec<[f64; 2]>,
+    #[serde(skip)]
+    name2idx: HashMap<String, usize>,
     pub name: String,
     pub x_axis: String,
-    pub y_axis: String,
+    pub y_axis: Vec<String>,
 }
 
 impl RealTimePlot {
+    fn init(&mut self) {
+        for (k, v) in self.y_axis.iter().enumerate() {
+            self.name2idx.insert(v.clone(), k);
+        }
+        let len = self.y_axis.len();
+        self.line.resize(len, Default::default());
+        self.latest.resize(len, Default::default());
+    }
     fn clean_data(&mut self) {
         self.line.drain(..);
-        self.latest = [0.0, 0.0];
+        self.latest.drain(..);
+        self.init();
     }
-    /// plot a line with latest point marked with a cross
+    /// plot line(s) with latest point marked with a cross
     fn plot(&self, plot_ui: &mut PlotUi) {
-        plot_ui.line(Line::new(PlotPoints::new(self.line.clone())).name(&self.y_axis));
-        plot_ui.points(
-            Points::new(PlotPoints::new(vec![self.latest]))
-                .shape(MarkerShape::Cross)
-                .radius(5.0),
-        );
+        for (idx, (line, latest)) in self.line.iter().zip(&self.latest).enumerate() {
+            let len = line.len();
+            let yrange = if len < 10_0000 {
+                0..len
+            } else {
+                len - 10_000..len
+            };
+            let y_axis_name = self.y_axis[idx].clone();
+            let line = &line[yrange];
+            plot_ui.line(Line::new(PlotPoints::new(Vec::from(line))).name(y_axis_name));
+            plot_ui.points(
+                Points::new(PlotPoints::new(vec![*latest]))
+                    .shape(MarkerShape::Cross)
+                    .radius(5.0),
+            );
+        }
     }
     /// push a point into plots
-    fn push(&mut self, pt: [f64; 2]) {
-        self.line.push(pt);
-        self.latest = pt;
+    fn push(&mut self, axis_name: &str, pt: [f64; 2]) {
+        let idx = self.name2idx[axis_name];
+        self.line[idx].push(pt);
+        self.latest[idx] = pt;
     }
 
     /// append a Vec of list into plot
-    fn append(&mut self, pts: &mut Vec<[f64; 2]>) {
-        if let Some(last) = pts.last() {
-            self.latest = last.to_owned();
+    fn append(&mut self, name: &str, mut pts: Vec<[f64; 2]>) {
+        if let Some(&idx) = self.name2idx.get(name) {
+            let (line, latest) = (&mut self.line[idx], &mut self.latest[idx]);
+            if let Some(last) = pts.last() {
+                *latest = last.to_owned();
+            }
+            line.append(&mut pts);
         }
-        self.line.append(pts);
+    }
+
+    fn all_axis_names(&self) -> Vec<String> {
+        let mut r = vec![self.x_axis.clone()];
+        r.append(&mut self.y_axis.clone());
+        r
+    }
+
+    fn update_points(&mut self, new_points: &HashMap<String, Vec<f64>>) {
+        if let Some(new_x) = new_points.get(&self.x_axis) {
+            for y_axis in self.y_axis.clone() {
+                if let Some(new_y) = new_points.get(&y_axis) {
+                    let pts: Vec<[f64; 2]> =
+                        new_x.iter().zip(new_y).map(|(x, y)| [*x, *y]).collect();
+                    self.append(&y_axis, pts);
+                }
+            }
+        }
     }
 }
 
@@ -95,6 +136,16 @@ impl Default for MultiPlot {
 }
 
 impl MultiPlot {
+    fn reset(&mut self) {
+        for plot in &mut self.plots{
+            plot.clean_data()
+        }
+    }
+    pub(crate) fn init(&mut self) {
+        for plot in &mut self.plots {
+            plot.init();
+        }
+    }
     pub(crate) fn set_recv(&mut self, recv: tokio::sync::mpsc::Receiver<Vec<(String, String)>>) {
         self.recv = Some(recv)
     }
@@ -115,26 +166,10 @@ impl MultiPlot {
                     new_points.insert(column_name, nums);
                 }
             }
-            let mut is_in = HashSet::new();
             for plot in &mut self.plots {
-                if let (Some(col_x), Some(col_y)) =
-                    (new_points.get(&plot.x_axis), new_points.get(&plot.y_axis))
-                {
-                    is_in.insert(plot.x_axis.clone());
-                    is_in.insert(plot.y_axis.clone());
-                    let mut new_line = col_x
-                        .iter()
-                        .zip(col_y)
-                        .map(|pt| [*pt.0, *pt.1])
-                        .collect::<Vec<_>>();
-                    plot.append(&mut new_line);
-                }
+                plot.update_points(&new_points)
             }
-            if is_in.len() != new_points.len() {
-                let not_in: HashSet<_> =
-                    new_points.keys().filter(|k| !is_in.contains(*k)).collect();
-                self.append_log(&format!("Unknown column name: {not_in:?}"));
-            }
+            // TODO: check for nonexist axis name
             Ok(cnt)
         } else {
             Err("no channel is found".to_string())
@@ -150,12 +185,6 @@ impl MultiPlot {
     pub(crate) fn append_log(&mut self, s: &str) {
         self.logs.push((Local::now(), s.to_string()))
     }
-    fn mock_append_points(&mut self) {
-        let time = self.time;
-        for p in &mut self.plots {
-            p.push([time, time.sin()]);
-        }
-    }
 
     fn plot_panel(&mut self, ui: &mut egui::Ui) {
         for i in [0, 1] {
@@ -165,7 +194,7 @@ impl MultiPlot {
                     Plot::new(format!("{i}_{j}"))
                         .view_aspect(1.0)
                         .width(WIDTH)
-                        .legend(Legend::default())
+                        .legend(Legend::default().position(Corner::LeftBottom))
                         .x_axis_formatter(move |x, _| format!("{x_axis}:{x}"))
                         .show(ui, |plot_ui| {
                             self.plots[i * 3 + j].plot(plot_ui);
@@ -177,7 +206,7 @@ impl MultiPlot {
     }
     fn logs_panel(&mut self, ui: &mut egui::Ui) {
         use egui_extras::{Column, TableBuilder};
-        let mut table = TableBuilder::new(ui)
+        let table = TableBuilder::new(ui)
             .striped(true)
             .column(Column::auto())
             .column(Column::remainder().resizable(true));
@@ -219,10 +248,12 @@ impl eframe::App for MultiPlot {
                 ui.selectable_value(&mut self.open_panel, Panel::Plots, "plots");
                 ui.selectable_value(&mut self.open_panel, Panel::Log, "logs");
                 ui.add_space(20.0);
-                if ui.button("reset").on_hover_text("Clean all plot data").clicked() {
-                    for plot in &mut self.plots {
-                        plot.clean_data();
-                    }
+                if ui
+                    .button("reset")
+                    .on_hover_text("Clean all plot data")
+                    .clicked()
+                {
+                    self.reset()
                 }
             });
             ui.separator();
